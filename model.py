@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torchsummary import summary
 
 # config (out_ch, in_ch, stride)
 """ 
@@ -11,7 +12,7 @@ List is structured by "B" indicating a residual block followed by the number of 
 "U" is for upsampling the feature map and concatenating with a previous layer
 """
 config = [
-    (32, 3, 1), #(out_ch, in_ch, stride)
+    (32, 3, 1), #(out_ch, kernel size, stride)
     (64, 3, 2),
     ["B", 1],   #["residual block", "no of repeats"]
     (128, 3, 2),
@@ -46,10 +47,15 @@ class CNNBlock(nn.Module):
         self.use_bn_act = bn_act
     
     def forward(self, x):
+        #print("inside CNN Block")
         if self.use_bn_act:
-            return self.leaky(self.bn(self.conv(x)))
+            x = self.leaky(self.bn(self.conv(x)))
+            #print(" x shape after conv block: ", x.shape)
+            return x
         else:
-            return self.conv(x)
+            x= self.conv(x)
+            #print(" x shape after conv block: ", x.shape)
+            return x
 
 class ResidualBlock(nn.Module):
     def __init__(self, channels, use_residual = True, num_repeats = 1):
@@ -66,11 +72,14 @@ class ResidualBlock(nn.Module):
         self.num_repeats = num_repeats
 
     def forward(self, x):
+        #print("inside Residual block")
         for layer in self.Layers:
             if self.use_residual:
                 x = layer(x) + x          
             else:
                 x = layer(x)
+
+        #print(" x shape after Residual block: ", x.shape)
         return x
 
 
@@ -84,11 +93,10 @@ class ScalePrediction(nn.Module):
         self.num_classes = num_classes
 
     def forward(self, x):
-        return(
-            self.pred(x)
-            .reshape(x.shape[0], 3, self.num_classes+5, x.shape[2], x.shape[3])     #x.shape[0] - batch size, 3 # outputs for different anchor boxes, num_classes+5
-            .permute(0,1,3,4,2) #reordering channels
-        )
+        #print("Inside scale prediction")
+        x = self.pred(x).reshape(x.shape[0], 3, self.num_classes+5, x.shape[2], x.shape[3]).permute(0,1,3,4,2)     #x.shape[0] - batch size, 3 # outputs for different anchor boxes, num_classes+5 #.permute for reordering channels
+        #print(" x shape after Scale prediction block: ", x.shape)
+        return(x)
     
     #N - examples, 3 - anchor boxes, 13*13 grid, 5+num_classes output
 
@@ -103,21 +111,26 @@ class YOLOv3(nn.Module):
         outputs = []  # for each scale
         route_connections = []
         for layer in self.layers:
-            if isinstance(layer, ScalePrediction):
+            if isinstance(layer, ScalePrediction):  #storing output after scale prediction
                 outputs.append(layer(x))
-                continue
+                #print()
+                #print("__"*40)
+                continue    #this is the game  
 
-            x = layer(x)
+            x = layer(x)  #x is not stored after scale prediction block x as the dim of the layer previous to scale prediction which is the output of the cnn block
+            
 
             if isinstance(layer, ResidualBlock) and layer.num_repeats == 8:
                 route_connections.append(x)
 
             elif isinstance(layer, nn.Upsample):
+                #print("UPSAMPLED BY 2")
                 x = torch.cat([x, route_connections[-1]], dim=1)
                 route_connections.pop()
+            #print("__"*40)
 
         return outputs
-
+ 
     def create_conv_layers(self):
         layers = nn.ModuleList()
         in_channels = self.in_channels
